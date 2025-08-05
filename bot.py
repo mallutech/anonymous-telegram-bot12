@@ -1,117 +1,88 @@
-import logging
 import os
-from dotenv import load_dotenv
-from telegram import Update, ReplyKeyboardMarkup
+import random
+from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
     MessageHandler,
-    ContextTypes,
     filters,
+    ContextTypes,
 )
 
-# Enable logging
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
-)
-logger = logging.getLogger(__name__)
+TOKEN = os.environ["TOKEN"]
 
-# Load environment variables
-load_dotenv()
-TOKEN = os.getenv("TOKEN")
-
-# Store user data
-users = {}
-waiting_male = []
-waiting_female = []
+# In-memory storage
+waiting_users = {"male": [], "female": []}
 active_chats = {}
 
-# Gender selection keyboard
-gender_keyboard = ReplyKeyboardMarkup(
-    [["Male", "Female"]], one_time_keyboard=True, resize_keyboard=True
-)
-
-# Start command
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    users[user_id] = {"gender": None, "partner": None}
-    await update.message.reply_text("Welcome to Anonymous Chat!\nPlease select your gender:", reply_markup=gender_keyboard)
+    await update.message.reply_text(
+        "👋 Welcome to Anonymous Chat!\n"
+        "Use /male or /female to set your gender.\n"
+        "Then use /match to find a chat partner.\n"
+        "Use /stop to end the chat."
+    )
 
-# Handle gender
-async def gender(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    text = update.message.text.lower()
+async def set_male(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["gender"] = "male"
+    await update.message.reply_text("✅ Gender set to male.")
 
-    if text not in ["male", "female"]:
-        await update.message.reply_text("Please select a valid gender (Male/Female).")
+async def set_female(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["gender"] = "female"
+    await update.message.reply_text("✅ Gender set to female.")
+
+async def match(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    gender = context.user_data.get("gender")
+
+    if gender not in ["male", "female"]:
+        await update.message.reply_text("⚠️ Please set your gender using /male or /female.")
         return
 
-    users[user_id]["gender"] = text
-    await update.message.reply_text("Looking for a match...")
+    opposite = "female" if gender == "male" else "male"
 
-    await match_users(user_id)
-
-# Match logic
-async def match_users(user_id):
-    user_gender = users[user_id]["gender"]
-    opposite_queue = waiting_female if user_gender == "male" else waiting_male
-    own_queue = waiting_male if user_gender == "male" else waiting_female
-
-    if opposite_queue:
-        partner_id = opposite_queue.pop(0)
-        users[user_id]["partner"] = partner_id
-        users[partner_id]["partner"] = user_id
-
+    if waiting_users[opposite]:
+        partner_id = waiting_users[opposite].pop(0)
         active_chats[user_id] = partner_id
         active_chats[partner_id] = user_id
 
-        await send_message(user_id, "✅ Matched! Say hi anonymously.")
-        await send_message(partner_id, "✅ Matched! Say hi anonymously.")
+        await context.bot.send_message(chat_id=user_id, text="🎉 Partner found! Say hi!")
+        await context.bot.send_message(chat_id=partner_id, text="🎉 Partner found! Say hi!")
     else:
-        own_queue.append(user_id)
-        await send_message(user_id, "Waiting for a partner...")
+        if user_id not in waiting_users[gender]:
+            waiting_users[gender].append(user_id)
+            await update.message.reply_text("⏳ Waiting for a partner...")
+        else:
+            await update.message.reply_text("⏳ Still waiting for a match...")
 
-# Handle chat messages
-async def forward_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    partner_id = users.get(user_id, {}).get("partner")
+    partner_id = active_chats.pop(user_id, None)
+
+    if partner_id:
+        active_chats.pop(partner_id, None)
+        await context.bot.send_message(chat_id=partner_id, text="🚫 Your partner left the chat.")
+        await update.message.reply_text("✅ You have left the chat.")
+    else:
+        await update.message.reply_text("❌ You're not in a chat.")
+
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    partner_id = active_chats.get(user_id)
 
     if partner_id:
         await context.bot.send_message(chat_id=partner_id, text=update.message.text)
     else:
-        await update.message.reply_text("❗You're not matched yet. Please wait or /start again.")
+        await update.message.reply_text("💬 You're not in a chat. Use /match to find a partner.")
 
-# End chat
-async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    partner_id = users.get(user_id, {}).get("partner")
-
-    if partner_id:
-        await send_message(partner_id, "🚫 Your partner has left the chat.")
-        users[partner_id]["partner"] = None
-        active_chats.pop(partner_id, None)
-
-    users[user_id]["partner"] = None
-    active_chats.pop(user_id, None)
-
-    await update.message.reply_text("❌ You left the chat. Use /start to begin again.")
-
-# Utility send
-async def send_message(user_id, text):
-    try:
-        await app.bot.send_message(chat_id=user_id, text=text)
-    except Exception as e:
-        logger.warning(f"Failed to send message to {user_id}: {e}")
-
-# Main setup
-if __name__ == "__main__":
+if __name__ == '__main__':
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("male", set_male))
+    app.add_handler(CommandHandler("female", set_female))
+    app.add_handler(CommandHandler("match", match))
     app.add_handler(CommandHandler("stop", stop))
-    app.add_handler(MessageHandler(filters.Regex("^(Male|Female)$"), gender))
-    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), forward_message))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    print("Bot is running...")
     app.run_polling()
-    
