@@ -15,24 +15,26 @@ logging.basicConfig(
 )
 
 # Get bot token from environment
-TOKEN = os.environ["TOKEN"]
+TOKEN = os.environ.get("TOKEN")
 
 # In-memory user queues and chat pairs
 male_queue = []
 female_queue = []
 chat_pairs = {}
 
-# Commands
+# /start command
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "Welcome to Anonymous Chat Bot!\n"
-        "Type /male or /female to find a chat partner."
+        "👋 Welcome to Anonymous Chat Bot!\n"
+        "Use /male or /female to find a chat partner.\n"
+        "Use /leave to exit the chat anytime."
     )
 
+# /male command
 async def male(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     if user_id in chat_pairs:
-        await update.message.reply_text("You're already in a chat. Type /leave to exit.")
+        await update.message.reply_text("❗ You're already in a chat. Type /leave to exit.")
         return
 
     if female_queue:
@@ -44,12 +46,13 @@ async def male(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🔗 Connected to a female partner. Start chatting!")
     else:
         male_queue.append(user_id)
-        await update.message.reply_text("Waiting for a female partner...")
+        await update.message.reply_text("⏳ Waiting for a female partner...")
 
+# /female command
 async def female(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     if user_id in chat_pairs:
-        await update.message.reply_text("You're already in a chat. Type /leave to exit.")
+        await update.message.reply_text("❗ You're already in a chat. Type /leave to exit.")
         return
 
     if male_queue:
@@ -61,8 +64,9 @@ async def female(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🔗 Connected to a male partner. Start chatting!")
     else:
         female_queue.append(user_id)
-        await update.message.reply_text("Waiting for a male partner...")
+        await update.message.reply_text("⏳ Waiting for a male partner...")
 
+# /leave command
 async def leave(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     if user_id in chat_pairs:
@@ -76,24 +80,25 @@ async def leave(update: Update, context: ContextTypes.DEFAULT_TYPE):
             male_queue.remove(user_id)
         if user_id in female_queue:
             female_queue.remove(user_id)
-        await update.message.reply_text("You are not in a chat.")
+        await update.message.reply_text("❌ You're not in a chat.")
 
+# Handle messages and media
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     if user_id in chat_pairs:
         partner_id = chat_pairs[user_id]
         if update.message.text:
-            await context.bot.send_message(partner_id, update.message.text)
+            await context.bot.send_message(partner_id, text=update.message.text)
         elif update.message.sticker:
-            await context.bot.send_sticker(partner_id, update.message.sticker.file_id)
+            await context.bot.send_sticker(partner_id, sticker=update.message.sticker.file_id)
         elif update.message.photo:
-            await context.bot.send_photo(partner_id, update.message.photo[-1].file_id)
+            await context.bot.send_photo(partner_id, photo=update.message.photo[-1].file_id)
         elif update.message.video:
-            await context.bot.send_video(partner_id, update.message.video.file_id)
+            await context.bot.send_video(partner_id, video=update.message.video.file_id)
     else:
-        await update.message.reply_text("❌ You're not in a chat. Type /male or /female to find one.")
+        await update.message.reply_text("❗ You're not in a chat. Use /male or /female to find a partner.")
 
-# Main app
+# Main function
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
